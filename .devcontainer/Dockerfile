@@ -1,5 +1,6 @@
-# ESP Monorepo - Rust Development Container
-# Security-focused development environment with cross-compilation support
+# ESP Agent SDK - Rust Development Container
+# Cross-Compilation Support: Linux GNU, Linux musl, Windows GNU
+# Security-focused development environment
 
 FROM rust:1.85-bookworm
 
@@ -12,16 +13,18 @@ ENV CARGO_HOME=/usr/local/cargo \
     RUST_BACKTRACE=1 \
     CARGO_INCREMENTAL=1
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies for all cross-compilation targets
+RUN apt-get update && apt-get install -y --no-install-recommends \
     # Build essentials
     build-essential \
     pkg-config \
     libssl-dev \
-    # Cross-compilation (Windows GNU target)
-    mingw-w64 \
-    # Cross-compilation (musl for static Linux builds - RHEL, Alpine, etc.)
+    # Windows cross-compilation (MinGW-w64)
+    gcc-mingw-w64-x86-64 \
+    g++-mingw-w64-x86-64 \
+    # Linux musl cross-compilation (static builds for RHEL, Alpine, etc.)
     musl-tools \
+    musl-dev \
     # Development tools
     git \
     curl \
@@ -40,7 +43,7 @@ RUN rustup component add \
     rust-analyzer \
     llvm-tools-preview
 
-# Add cross-compilation targets
+# Add all cross-compilation targets
 RUN rustup target add \
     x86_64-pc-windows-gnu \
     x86_64-unknown-linux-gnu \
@@ -54,5 +57,8 @@ RUN cargo install --locked cargo-audit && \
 RUN git config --global init.defaultBranch main && \
     git config --global core.autocrlf input && \
     git config --global pull.rebase false
+
+# Note: Cargo cross-compilation config is in workspace .cargo/config.toml
+# The workspace config.toml defines linker settings for each target
 
 CMD ["/bin/bash"]

@@ -5,10 +5,10 @@ members = ["agent", "contract_kit"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = [""]
+authors = ["Curtis Slone"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/scanset/"
-homepage = "https://github.com/scanset/"
+repository = "https://github.com/scanset/ESP-Agent-SDK"
+homepage = "https://github.com/scanset/ESP-Agent-SDK"
 
 [workspace.dependencies]
 # Shared dependencies across workspace
@@ -19,12 +19,12 @@ toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
-# External ESP dependencies from GitHub
-common = { git = "https://github.com/scanset/Endpoint-State-Policy", tag = "v1.0.0" }
-agent_core = { git = "https://github.com/scanset/Endpoint-State-Policy", tag = "v1.0.0" }
-compiler = { git = "https://github.com/scanset/Endpoint-State-Policy", tag = "v1.0.0" }
+# External ESP dependencies from GitHub (core ESP engine)
+common = { git = "https://github.com/CurtisSlone/Endpoint-State-Policy", tag = "v1.0.0" }
+compiler = { git = "https://github.com/CurtisSlone/Endpoint-State-Policy", tag = "v1.0.0" }
+execution_engine = { git = "https://github.com/CurtisSlone/Endpoint-State-Policy", tag = "v1.0.0" }
 
-# Local contract_kit
+# Local crates
 contract_kit = { path = "contract_kit" }
 
 [profile.dev]

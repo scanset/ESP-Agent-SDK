@@ -15,7 +15,7 @@ pub fn build_full_result(scan_results: &[ScanResult]) -> Result<FullResult, Outp
     let policies: Vec<PolicyInput> = scan_results
         .iter()
         .map(|scan_result| {
-            let evidence = scan_result.evidence.clone().unwrap_or_else(Evidence::new);
+            let evidence: Evidence = scan_result.evidence.clone().unwrap_or_default();
 
             PolicyInput::new(
                 &scan_result.outcome.policy_id,

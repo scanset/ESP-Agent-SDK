@@ -3,7 +3,7 @@ name = "contract_kit"
 version.workspace = true
 edition.workspace = true
 authors = ["ESP Team"]
-description = "ESP Contract Kit
+description = "ESP Contract Kit"
 license.workspace = true
 
 

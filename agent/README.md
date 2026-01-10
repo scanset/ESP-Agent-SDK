@@ -1,111 +1,161 @@
-# ESP Compliance Agent
+# ESP Agent
 
-Reference CLI application for ESP (Endpoint State Policy) compliance scanning.
+**Compliance scanning agent using ESP (Endpoint State Policy) files.**
+
+The ESP Agent executes ESP policies against endpoint systems and produces compliance results in multiple formats suitable for different use cases — from CI/CD pipelines to auditor verification.
+
+---
 
 ## Overview
 
-The Agent (`esp_agent`) is a working example of how to build a scanner using `contract_kit` and `execution_engine`. It demonstrates:
-
-- Building a `CtnStrategyRegistry` with collectors and executors
-- Using `execution_api` to scan ESP files
-- Handling single file and batch directory scanning
-- Producing results in multiple output formats (summary, full, attestation, assessor)
-- Modular architecture for maintainability
-
-Use this crate as a template when building your own scanner.
-
-## Architecture
-
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         agent                               │
+│                       ESP Agent                             │
+├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌───────────┐  │
-│  │ main.rs  │  │  cli.rs  │  │ config.rs │  │ scanner.rs│  │
-│  │ (entry)  │  │ (args)   │  │ (types)   │  │ (core)    │  │
-│  └────┬─────┘  └──────────┘  └───────────┘  └─────┬─────┘  │
-│       │                                           │        │
-│       │        ┌──────────┐  ┌───────────┐        │        │
-│       │        │discovery │  │ registry  │        │        │
-│       │        │  .rs     │  │   .rs     │────────┤        │
-│       │        └──────────┘  └───────────┘        │        │
-│       │                                           │        │
-│       │              ┌────────────┐               │        │
-│       └──────────────│  output/   │◀──────────────┘        │
-│                      │  mod.rs    │                        │
-│                      │  full.rs   │                        │
-│                      │  attest.rs │                        │
-│                      │  summary.rs│                        │
-│                      │  assessor.rs                        │
-│                      └────────────┘                        │
-└────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     contract_kit                            │
-│  • collectors, executors, contracts                         │
-│  • execution_api (scan_file, scan_ast)                     │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    execution_engine                         │
-│  • Resolution, Execution, Strategy framework                │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │  Discovery  │───▶│   Scanner   │───▶│   Output    │     │
+│  │             │    │             │    │             │     │
+│  │ Find .esp   │    │ Compile     │    │ Format      │     │
+│  │ files       │    │ Collect     │    │ Results     │     │
+│  │             │    │ Validate    │    │             │     │
+│  └─────────────┘    └─────────────┘    └─────────────┘     │
+│                            │                   │            │
+│                            ▼                   ▼            │
+│                     ┌───────────┐       ┌───────────┐      │
+│                     │ Registry  │       │  Console  │      │
+│                     │           │       │  + File   │      │
+│                     │ CTN Types │       │  Output   │      │
+│                     └───────────┘       └───────────┘      │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Module Structure
+---
 
+## Installation
+
+### From Source
+
+```bash
+# Build the agent
+cargo build --release --package agent
+
+# Install to ~/.cargo/bin
+cargo install --path agent
 ```
-agent/src/
-├── main.rs           Entry point and orchestration
-├── cli.rs            Command-line argument parsing
-├── config.rs         Configuration types (OutputFormat, ScanConfig)
-├── scanner.rs        Core scanning logic
-├── discovery.rs      ESP file discovery utilities
-├── registry.rs       Strategy registry setup
-└── output/
-    ├── mod.rs        Output module coordinator
-    ├── full.rs       Full results with evidence
-    ├── attestation.rs CUI-free attestation format
-    ├── summary.rs    Minimal summary format
-    └── assessor.rs   Assessor package with reproducibility
+
+### Using Makefile
+
+```bash
+# Build the agent
+make build
+
+# Build release version
+make release
 ```
+
+---
 
 ## Usage
 
-### Command Line
+### Basic Commands
 
 ```bash
-# Scan single file
+# Scan a single policy file (console output only)
 esp_agent policy.esp
 
-# Scan directory
-esp_agent /etc/esp/policies/
+# Scan all ESP files in a directory
+esp_agent /path/to/policies/
 
-# Specify output file
+# Save results to a file
 esp_agent --output results.json policy.esp
 
-# Choose output format
-esp_agent --format attestation -o attestation.json policy.esp
+# Specify output format
+esp_agent --format attestation --output attestation.json policy.esp
 
-# Quiet mode (suppress progress output)
-esp_agent --quiet /path/to/policies/
-
-# Help
-esp_agent --help
+# Quiet mode (file output only, no console)
+esp_agent --quiet --output results.json /path/to/policies/
 ```
 
-### Options
+### Command-Line Options
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--help` | `-h` | Show help message |
-| `--quiet` | `-q` | Suppress progress output |
-| `--output <file>` | `-o` | Write results to specified file |
-| `--format <format>` | `-f` | Output format: `full`, `summary`, `attestation`, `assessor` |
+```
+USAGE:
+    esp_agent [OPTIONS] <file.esp>       Scan single ESP file
+    esp_agent [OPTIONS] <directory>      Scan all ESP files in directory
+    esp_agent --help                     Show help message
 
-### Exit Codes
+OPTIONS:
+    -h, --help                  Show help message
+    -q, --quiet                 Suppress console output
+    -o, --output <file>         Write results to JSON file (optional)
+    -f, --format <format>       Output format: full (default), summary,
+                                attestation, assessor
+```
+
+### Examples
+
+```bash
+# Console output only
+esp_agent policy.esp
+
+# Console + file output
+esp_agent --output results.json policy.esp
+
+# Attestation format to file
+esp_agent --format attestation -o attestation.json policy.esp
+
+# Batch scan, file only, no console
+esp_agent --quiet -o results.json /path/to/policies/
+
+# Assessor package for audit
+esp_agent --format assessor -o assessor_package.json /path/to/policies/
+```
+
+---
+
+## Output Formats
+
+The agent produces a **single envelope** containing all scanned policies, regardless of how many ESP files were scanned.
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| `full` | Complete results with findings and evidence (default) | Remediation, incident response |
+| `summary` | Minimal output with pass/fail counts | CI/CD pipelines, quick checks |
+| `attestation` | CUI-free format safe for network transport | SIEM/SOAR, dashboards, SaaS |
+| `assessor` | Full package with reproducibility info | Auditor verification, 3PAO |
+
+### Output Content Matrix
+
+| Content | Summary | Attestation | Full | Assessor |
+|---------|---------|-------------|------|----------|
+| Policy ID | ✓ | ✓ | ✓ | ✓ |
+| Outcome (pass/fail) | ✓ | ✓ | ✓ | ✓ |
+| Criticality | ✓ | ✓ | ✓ | ✓ |
+| Criteria counts | ✓ | ✗ | ✗ | ✗ |
+| Control mappings | ✗ | ✓ | ✓ | ✓ |
+| Weight | ✗ | ✓ | ✓ | ✓ |
+| Evidence hash | ✗ | ✓ | ✓ | ✓ |
+| Host ID | ✗ | ✓ | ✓ | ✓ |
+| Signature block | ✗ | ✓ | ✓ | ✓ |
+| Findings | ✗ | ✗ | ✓ | ✓ |
+| Evidence data | ✗ | ✗ | ✓ | ✓ |
+| Collection method | ✗ | ✗ | ✓ | ✓ |
+| Reproducibility info | ✗ | ✗ | ✗ | ✓ |
+
+### Network Safety
+
+| Format | Contains CUI | Network Safe |
+|--------|--------------|--------------|
+| Summary | No | Yes |
+| Attestation | No | Yes |
+| Full Results | Yes | No |
+| Assessor Package | Yes | No |
+
+---
+
+## Exit Codes
 
 | Code | Meaning |
 |------|---------|
@@ -113,280 +163,225 @@ esp_agent --help
 | 1 | One or more policies failed |
 | 2 | Execution error |
 
-## Output Formats
+---
 
-All formats produce a **single envelope** containing all scanned policies, whether scanning a single file or an entire directory.
+## Architecture
 
-### Summary (`--format summary`)
+### Module Structure
 
-Minimal JSON output with pass/fail counts. Useful for CI/CD pipelines.
-
-```json
-{
-  "agent": { "id": "esp-agent", "version": "1.0.0" },
-  "summary": { "total_policies": 3, "passed": 2, "failed": 1 },
-  "policies": [
-    { "policy_id": "...", "passed": true, "findings_count": 0 }
-  ]
-}
+```
+agent/
+├── src/
+│   ├── main.rs          # Entry point, CLI orchestration
+│   ├── cli.rs           # Argument parsing, help text
+│   ├── config.rs        # Configuration types (ScanConfig, OutputFormat)
+│   ├── discovery.rs     # ESP file discovery
+│   ├── registry.rs      # CTN strategy registry setup
+│   ├── scanner.rs       # Core scanning logic
+│   └── output/
+│       ├── mod.rs       # Output module coordination
+│       ├── console.rs   # Console formatting
+│       ├── summary.rs   # Summary JSON builder
+│       ├── attestation.rs # Attestation builder
+│       ├── full.rs      # Full result builder
+│       └── assessor.rs  # Assessor package builder
+└── Cargo.toml
 ```
 
-### Full (`--format full`) — Default
+### Processing Pipeline
 
-Complete results with findings and evidence. For local storage and analysis.
+```
+1. CLI Parsing
+   └── Parse arguments → ScanConfig
 
-```json
-{
-  "envelope": {
-    "result_id": "esp-result-...",
-    "evidence_hash": "sha256:...",
-    "agent": { ... },
-    "host": { ... }
-  },
-  "summary": { "total_policies": 3, "passed": 2, "failed": 1 },
-  "policies": [
-    {
-      "identity": { "policy_id": "...", "control_mappings": [...] },
-      "outcome": "pass",
-      "findings": [],
-      "evidence": {
-        "data": { ... },
-        "collection_metadata": [
-          { "method": { "method_type": "file_stat", "target": "/etc/passwd" } }
-        ]
-      }
-    }
-  ]
-}
+2. Discovery
+   └── Find .esp files in path
+
+3. Registry Setup
+   └── Create CTN strategy registry with collectors/executors
+
+4. Scanning (per file)
+   ├── Compile ESP file
+   ├── Collect system data
+   ├── Validate against states
+   └── Generate findings
+
+5. Output
+   ├── Print to console (unless --quiet)
+   └── Write to file (if --output specified)
 ```
 
-### Attestation (`--format attestation`)
+### Registered CTN Types
 
-CUI-free format safe for network transport. Contains evidence hash but no actual evidence data.
+The agent registers the following CTN strategies:
 
-```json
-{
-  "envelope": { "evidence_hash": "sha256:..." },
-  "summary": { ... },
-  "checks": [
-    { "identity": { ... }, "outcome": "pass", "weight": 0.8 }
-  ]
-}
+| CTN Type | Collector | Executor |
+|----------|-----------|----------|
+| `file_metadata` | FileSystemCollector | FileMetadataExecutor |
+| `file_content` | FileSystemCollector | FileContentExecutor |
+| `json_record` | FileSystemCollector | JsonRecordExecutor |
+| `tcp_listener` | TcpListenerCollector | TcpListenerExecutor |
+| `k8s_resource` | K8sResourceCollector | K8sResourceExecutor |
+| `computed_values` | ComputedValuesCollector | ComputedValuesExecutor |
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ESP_LOGGING_MIN_LEVEL` | Minimum log level | `info` |
+| `ESP_LOGGING_USE_STRUCTURED` | Enable JSON logging | `false` |
+| `ESP_LOGGING_CARGO_STYLE` | Cargo-style error output | `true` |
+
+### Logging Levels
+
+| Level | What You See |
+|-------|--------------|
+| `debug` | Everything (tokens, symbols, validation steps) |
+| `info` | Phase completions, scan results (default) |
+| `warning` | Potential issues, non-critical problems |
+| `error` | Only critical errors |
+
+```bash
+# Enable debug logging
+export ESP_LOGGING_MIN_LEVEL=debug
+esp_agent policy.esp
 ```
 
-### Assessor (`--format assessor`)
-
-Complete package with reproducibility information for compliance assessors.
-
-```json
-{
-  "envelope": { ... },
-  "summary": { ... },
-  "policies": [
-    {
-      "identity": { ... },
-      "outcome": "pass",
-      "evidence": { ... },
-      "reproducibility": {
-        "commands": [
-          {
-            "object_id": "passwd_file",
-            "method_type": "file_read",
-            "command": "cat /etc/passwd",
-            "target": "/etc/passwd"
-          }
-        ],
-        "requirements": ["File system access to target paths"]
-      }
-    }
-  ],
-  "package_info": {
-    "format_version": "1.0.0",
-    "contains_cui": true,
-    "distribution": "Internal use only - contains CUI"
-  }
-}
-```
-
-### Format Comparison
-
-| Content | Summary | Full | Attestation | Assessor |
-|---------|---------|------|-------------|----------|
-| Policy outcomes | ✓ | ✓ | ✓ | ✓ |
-| Control mappings | ✗ | ✓ | ✓ | ✓ |
-| Findings | ✗ | ✓ | ✗ | ✓ |
-| Evidence data | ✗ | ✓ | ✗ | ✓ |
-| Evidence hash | ✗ | ✓ | ✓ | ✓ |
-| Collection methods | ✗ | ✓ | ✗ | ✓ |
-| Commands/inputs | ✗ | ✗ | ✗ | ✓ |
-| Reproducibility info | ✗ | ✗ | ✗ | ✓ |
-| Safe for network | ✓ | ✗ | ✓ | ✗ |
+---
 
 ## Console Output
 
-**Single file scan:**
+### Progress Output
+
+During scanning, the agent displays progress:
+
 ```
-Scanning 1 ESP file(s)...
+ESP Compliance Agent v0.1.0
+Scanning 3 ESP file(s)...
 
-[1/1] /path/to/policy.esp
-  ✓ PASSED (3/3 criteria)
-
-═══════════════════════════════════════
-Scan Summary
-═══════════════════════════════════════
-  Total:     1
-  Passed:    1
-  Failed:    0
-  Errors:    0
-  Duration:  0.02s
-  Format:    full
-═══════════════════════════════════════
-
-[OK] Results saved to: results.json
+[1/3] ✓ test-file-metadata-001 (3/3 criteria)
+[2/3] ✓ test-file-content-001 (4/4 criteria)
+[3/3] ✗ test-tcp-listener-001 (2 findings)
+       └─ FINDING-001: Port 2024 not listening
 ```
 
-**Directory scan:**
+### Results Summary
+
+After scanning, a summary is displayed:
+
 ```
-Scanning 5 ESP file(s)...
-
-[1/5] /path/to/file_permissions.esp
-  ✓ PASSED (3/3 criteria)
-
-[2/5] /path/to/service_checks.esp
-  ✓ PASSED (2/2 criteria)
-
-[3/5] /path/to/kernel_params.esp
-  ✗ FAILED (1 findings)
-    - f-abc123: sysctl_parameter validation failed
-
-═══════════════════════════════════════
-Scan Summary
-═══════════════════════════════════════
-  Total:     5
-  Passed:    4
-  Failed:    1
-  Errors:    0
-  Duration:  0.15s
-  Format:    full
-═══════════════════════════════════════
-
-[OK] Results saved to: results.json
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                 SUMMARY                                       ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║   Total Policies:   3                                                         ║
+║   Passed:           2                                                         ║
+║   Failed:           1                                                         ║
+║                                                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║   Posture Score:  85.0%                                                       ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║   By Criticality:        Pass    Fail    Total                                ║
+║   ─────────────────────────────────────────                                   ║
+║   High                     1       0        1                                 ║
+║   Medium                   1       1        2                                 ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
 
-## Building Your Own Agent
+### Posture Score
 
-### 1. Registry Setup (`registry.rs`)
+The posture score is a weighted average based on criticality:
 
-The registry maps CTN types to collector/executor pairs:
+| Criticality | Weight |
+|-------------|--------|
+| Critical | 1.0 |
+| High | 0.8 |
+| Medium | 0.5 |
+| Low | 0.3 |
+| Info | 0.1 |
+
+```
+Posture Score = (Sum of passed weights) / (Sum of all weights) × 100%
+```
+
+---
+
+## Dependencies
+
+### Crate Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `common` | Shared types, results, logging |
+| `compiler` | ESP policy compilation |
+| `execution_engine` | Resolution and execution framework |
+| `contract_kit` | CTN collectors, executors, contracts |
+
+### External Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| `serde` / `serde_json` | JSON serialization |
+
+---
+
+## Development
+
+### Building
+
+```bash
+# Debug build
+cargo build --package agent
+
+# Release build
+cargo build --release --package agent
+
+# Run tests
+cargo test --package agent
+```
+
+### Running Locally
+
+```bash
+# Run with cargo
+cargo run --package agent -- policy.esp
+
+# Run with arguments
+cargo run --package agent -- --format summary -o out.json /path/to/policies/
+```
+
+### Adding CTN Types
+
+To add a new CTN type, update `registry.rs`:
 
 ```rust
-use contract_kit::execution_api::strategies::{CtnStrategyRegistry, StrategyError};
-use contract_kit::{collectors, contracts, executors, commands};
+// Create contract
+let my_contract = contracts::create_my_ctn_contract();
 
-pub fn create_scanner_registry() -> Result<CtnStrategyRegistry, StrategyError> {
-    let mut registry = CtnStrategyRegistry::new();
-
-    // File-based strategies
-    let metadata_contract = contracts::create_file_metadata_contract();
-    registry.register_ctn_strategy(
-        Box::new(collectors::FileSystemCollector::new()),
-        Box::new(executors::FileMetadataExecutor::new(metadata_contract)),
-    )?;
-
-    // Command-based strategies (with platform whitelist)
-    let command_executor = commands::create_rhel9_command_executor();
-    let command_collector = collectors::CommandCollector::new(
-        "my-command-collector",
-        command_executor
-    );
-
-    let rpm_contract = contracts::create_rpm_package_contract();
-    registry.register_ctn_strategy(
-        Box::new(command_collector.clone()),
-        Box::new(executors::RpmPackageExecutor::new(rpm_contract)),
-    )?;
-
-    Ok(registry)
-}
+// Register strategy
+registry.register_ctn_strategy(
+    Box::new(collectors::MyCollector::new()),
+    Box::new(executors::MyExecutor::new(my_contract)),
+)?;
 ```
 
-### 2. Scanning (`scanner.rs`)
-
-Use `execution_api` to execute scans:
-
-```rust
-use contract_kit::execution_api::{
-    scan_file_with_logging,
-    logging,
-    ScanResult,
-};
-use std::sync::Arc;
-
-fn scan(registry: Arc<CtnStrategyRegistry>, path: &Path) -> Result<ScanResult, Error> {
-    logging::set_file_context(path.to_path_buf(), 1);
-    let result = scan_file_with_logging(path, registry)?;
-    logging::clear_file_context();
-    Ok(result)
-}
-```
-
-### 3. Output Generation (`output/`)
-
-Build results using the unified builder:
-
-```rust
-use common::results::{ResultBuilder, PolicyInput, Evidence};
-
-let builder = ResultBuilder::from_system("my-agent");
-let policies: Vec<PolicyInput> = scan_results.iter().map(|sr| {
-    PolicyInput::new(...)
-        .with_findings(sr.findings.clone())
-        .with_evidence(sr.evidence.clone())
-}).collect();
-
-let full_result = builder.build_full_result(policies)?;
-```
-
-### 4. Dependencies (`Cargo.toml`)
-
-```toml
-[package]
-name = "my_agent"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-contract_kit = { path = "../contract_kit" }
-common = { path = "../common", features = ["full-results", "attestation", "assessor-evidence"] }
-serde_json = "1.0"
-
-[[bin]]
-name = "my_scanner"
-path = "src/main.rs"
-```
-
-## Included CTN Types
-
-This reference agent includes strategies for:
-
-| CTN Type | Collector | Purpose |
-|----------|-----------|---------|
-| `file_metadata` | FileSystemCollector | File permissions, owner, size |
-| `file_content` | FileSystemCollector | File content string operations |
-| `json_record` | FileSystemCollector | Structured JSON validation |
-| `computed_values` | ComputedValuesCollector | RUN operation results |
-| `tcp_listener` | TcpListenerCollector | Port listening state |
-| `k8s_resource` | K8sResourceCollector | Kubernetes API objects |
-
-See `registry.rs` for the complete setup.
+---
 
 ## Related Documentation
 
-- [contract_kit](../contract_kit/README.md) - Collectors, executors, contracts
-- [execution_engine](../execution_engine/README.md) - Core execution framework
-- [common](../common/README.md) - Shared types and results module
-- [Scanner Development Guide](../docs/guides/Contract_Development_Guide.md) - Adding CTN types
+| Document | Description |
+|----------|-------------|
+| [ESP Language Guide](../guides/ESP_Language_Guide.md) | Policy authoring tutorial |
+| [ESP Overview](https://github.com/scanset/Endpoint-State-Policy) | Language specification
+
+---
 
 ## License
 
-See repository root for license information.
+Apache 2.0

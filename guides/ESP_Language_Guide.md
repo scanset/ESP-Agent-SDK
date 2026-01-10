@@ -6,7 +6,7 @@ A hands-on tutorial for learning the Endpoint State Policy language.
 
 ## Table of Contents
 
-1. [Introduction & Setup](#part-1-introduction--setup)
+1. [Introduction](#part-1-introduction)
 2. [ESP Fundamentals](#part-2-esp-fundamentals)
 3. [Building Your First Policy](#part-3-building-your-first-policy)
 4. [Intermediate Patterns](#part-4-intermediate-patterns)
@@ -20,7 +20,7 @@ A hands-on tutorial for learning the Endpoint State Policy language.
 
 ---
 
-## Part 1: Introduction & Setup
+## Part 1: Introduction
 
 ### What is ESP?
 
@@ -30,6 +30,15 @@ ESP (Endpoint State Policy) is a declarative language for expressing security an
 - Versioned and tracked like any other data
 - Reused across different platforms and environments
 - Audited and reviewed by humans
+
+### Core Design Principles
+
+1. **Policy as Data** — Policies describe *what* should be true, not *how* to check it
+2. **Fail-Fast Validation** — Errors caught at compile time, not runtime
+3. **Contract-Driven Extensibility** — CTN types defined by contracts
+4. **Deterministic Evaluation** — Same policy + same state = same result
+5. **Compliance-Ready Output** — Results mappable to standard formats
+6. **Trust Boundaries** — Inputs untrusted, outputs controlled
 
 ### Why Learn ESP?
 
@@ -44,7 +53,7 @@ ESP (Endpoint State Policy) is a declarative language for expressing security an
 
 | Part | Time | Topics |
 |------|------|--------|
-| 1 | 30 min | Introduction and setup |
+| 1 | 30 min | Introduction |
 | 2 | 1 hour | Core concepts: Objects, States, Criteria |
 | 3 | 1.5 hours | Building your first complete policy |
 | 4 | 2 hours | Variables, multiple checks, logic operators |
@@ -56,43 +65,75 @@ ESP (Endpoint State Policy) is a declarative language for expressing security an
 
 - Basic understanding of IT security concepts (file permissions, services, packages)
 - Familiarity with compliance frameworks (STIG, CIS, NIST) — helpful but not required
-- Docker Desktop or Docker Engine
-- Visual Studio Code with Dev Containers extension
-- Git
 
-### Environment Setup
+---
 
-**Step 1: Clone the repository**
+## Agent Usage
+
+The ESP Agent scans policies and produces compliance results in multiple formats.
+
+### Basic Commands
 
 ```bash
-git clone https://github.com/CurtisSlone/Endpoint-State-Policy.git
-cd Endpoint-State-Policy
+# Scan a single policy file (console output only)
+esp_agent policy.esp
+
+# Scan all ESP files in a directory
+esp_agent /path/to/policies/
+
+# Save results to a file
+esp_agent --output results.json policy.esp
+
+# Specify output format
+esp_agent --format attestation --output attestation.json policy.esp
+
+# Quiet mode (file output only, no console)
+esp_agent --quiet --output results.json /path/to/policies/
 ```
 
-**Step 2: Open in VS Code**
+### Command-Line Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message |
+| `-q, --quiet` | Suppress console output |
+| `-o, --output <file>` | Write results to JSON file |
+| `-f, --format <format>` | Output format (see below) |
+
+### Output Formats
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| `full` | Complete results with findings and evidence (default) | Remediation, incident response |
+| `summary` | Minimal output with pass/fail counts | CI/CD pipelines |
+| `attestation` | CUI-free format safe for network transport | SIEM/SOAR, dashboards |
+| `assessor` | Full package with reproducibility info | Auditor verification |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All policies passed |
+| 1 | One or more policies failed |
+| 2 | Execution error |
+
+### Examples
 
 ```bash
-code .
-```
+# Console output only
+esp_agent policy.esp
 
-**Step 3: Start the Dev Container**
+# Console + file output
+esp_agent --output results.json policy.esp
 
-When VS Code opens, click "Reopen in Container" or press `F1` and select "Dev Containers: Reopen in Container".
+# Attestation format to file
+esp_agent --format attestation -o attestation.json policy.esp
 
-**Step 4: Verify installation**
+# Batch scan, file only, no console
+esp_agent --quiet -o results.json /path/to/policies/
 
-```bash
-make run ESP=esp/
-```
-
-### Scanner Usage
-
-```bash
-# Single policy scan
-make run ESP=path/to/policy.esp
-
-# Batch directory scan
-make run ESP=path/to/policies/
+# Assessor package for audit
+esp_agent --format assessor -o assessor_package.json /path/to/policies/
 ```
 
 ### Logging Levels
@@ -109,7 +150,7 @@ Control verbosity with `ESP_LOGGING_MIN_LEVEL`:
 ```bash
 # Linux/Mac
 export ESP_LOGGING_MIN_LEVEL=debug
-make run ESP=esp/test_file_metadata.esp
+esp_agent policy.esp
 ```
 
 ---
@@ -121,10 +162,20 @@ make run ESP=esp/test_file_metadata.esp
 | Step | What Happens |
 |------|--------------|
 | 1. Write Policy | Define what should be checked |
-| 2. Parse | Scanner validates syntax |
+| 2. Compile | Compiler validates syntax, types, references |
 | 3. Collect Data | Scanner gathers actual system state |
 | 4. Compare | Scanner compares actual vs expected |
-| 5. Report | You get PASS or FAIL for each check |
+| 5. Report | You get PASS, FAIL, or ERROR for each check |
+
+### Outcome Types
+
+Every evaluation produces one of three outcomes:
+
+| Outcome | Description |
+|---------|-------------|
+| `Pass` | Compliance check succeeded — system is compliant |
+| `Fail` | Compliance check found non-compliance |
+| `Error` | Compliance check could not complete (system issue) |
 
 ### Your First Policy
 
@@ -132,10 +183,13 @@ Check if `/etc/passwd` has secure permissions:
 
 ```esp
 META
-    esp_scan_id `my-first-policy`
+    esp_id `my-first-policy`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `high`
     control_mapping `CIS:6.1.1`
+    title `Passwd File Permissions`
 META_END
 
 DEF
@@ -196,7 +250,7 @@ OBJECT_END
 
 ### Understanding States
 
-States define what should be true about an object.
+States define what should be true about an object. When a STATE contains multiple fields, they combine using **implicit AND** — all fields must pass.
 
 ```esp
 STATE secure_file
@@ -236,6 +290,23 @@ STATE_END
 | `pattern_match` | Regex pattern | `content string pattern_match \`^[0-9]+$\`` |
 | `matches` | Regex (alias) | `name string matches \`^app-.*\`` |
 
+### Type System
+
+ESP v1.0.0 enforces **strict typing** with no implicit conversions.
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `string` | UTF-8 text | `/etc/passwd` |
+| `int` | 64-bit signed integer | `1024` |
+| `float` | 64-bit floating point | `3.14159` |
+| `boolean` | True/false | `true` |
+| `binary` | Raw byte data | File contents |
+| `record_data` | Structured data (JSON, etc.) | Nested fields |
+| `version` | Semantic version | `2.4.1` |
+| `evr_string` | Package version (epoch:version-release) | `2:1.8.0-1.el9` |
+
+**Key constraint:** `int` and `float` are NOT interchangeable. Operations must use matching types.
+
 ### Connecting Objects and States with CTN
 
 The CTN (Criterion) connects objects with states for validation:
@@ -251,14 +322,14 @@ CTN_END
 - `criterion_type` — The CTN type (e.g., `file_metadata`, `file_content`, `tcp_listener`)
 - `existence_check` — How many objects must exist
 - `item_check` — How many objects must pass state validation
-- `state_operator` — How to combine multiple state fields (optional)
+- `state_operator` — How to combine multiple state fields (optional, default: AND)
 
 **TEST options:**
 
 | Part | Options | Meaning |
 |------|---------|---------|
-| Existence | `all` | Every object must exist |
-| | `any` | At least one object exists |
+| Existence | `all` | All expected objects must exist |
+| | `any` | No existence constraint |
 | | `none` | No objects should exist |
 | | `at_least_one` | One or more must exist |
 | | `only_one` | Exactly one must exist |
@@ -276,17 +347,18 @@ CTN_END
 
 ### Example: File Metadata Validation
 
-This example is from `esp/test_file_metadata.esp` — a complete policy that validates system file permissions.
+This example validates system file permissions — from `esp/test_file_metadata.esp`:
 
 ```esp
 META
-    esp_scan_id `test-file-metadata-001`
+    esp_id `test-file-metadata-001`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `high`
     control_mapping `CIS:6.1.1,CIS:6.1.2,NIST-800-53:AC-6`
     title `Critical System File Permissions`
     description `Validates that critical system files have correct permissions and ownership`
-    version `1.0.0`
     author `security-team`
     tags `file-permissions,linux,hardening`
 META_END
@@ -358,12 +430,12 @@ DEF_END
 **Run this policy:**
 
 ```bash
-make run ESP=esp/test_file_metadata.esp
+esp_agent esp/test_file_metadata.esp
 ```
 
 **Key points:**
 
-1. **META block** is required with `esp_scan_id`, `platform`, `criticality`, and `control_mapping`
+1. **META block** requires `esp_id`, `version`, `dsl_schema_version`, `platform`, `criticality`, `control_mapping`, and `title`
 2. **Variables** (`VAR`) let you reuse values like UIDs
 3. **Objects** use `path` field for file-based CTN types (see [ctn_file_metadata.md](../contract_kit/docs/ctn_file_metadata.md))
 4. **States** use fields supported by the CTN type
@@ -375,17 +447,18 @@ make run ESP=esp/test_file_metadata.esp
 
 ### Example: File Content Validation
 
-This example is from `esp/test_file_content.esp` — validates file contents using string operations.
+This example validates file contents using string operations — from `esp/test_file_content.esp`:
 
 ```esp
 META
-    esp_scan_id `test-file-content-001`
+    esp_id `test-file-content-001`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `medium`
     control_mapping `CIS:5.4.1,NIST-800-53:AC-2`
     title `System Account Configuration Validation`
     description `Validates critical system file content for security compliance`
-    version `1.0.0`
     author `security-team`
     tags `file-content,linux,accounts`
 META_END
@@ -485,6 +558,26 @@ DEF_END
 | `AND` | All checks must pass | Strict requirements |
 | `OR` | At least one must pass | Alternative options |
 
+**CRI AND Evaluation:**
+
+| Children | Result |
+|----------|--------|
+| [Pass, Pass, Pass] | Pass |
+| [Pass, Fail, Pass] | Fail |
+| [Pass, Error, Pass] | Error |
+| [Fail, Fail, Fail] | Fail |
+
+**CRI OR Evaluation:**
+
+| Children | Result |
+|----------|--------|
+| [Fail, Fail, Pass] | Pass |
+| [Error, Fail, Pass] | Pass |
+| [Fail, Fail, Fail] | Fail |
+| [Error, Error, Error] | Error |
+
+**Important:** All children are **always evaluated** — no short-circuiting. This ensures complete reporting.
+
 **AND example** — all must pass:
 
 ```esp
@@ -547,23 +640,40 @@ CRI OR
 CRI_END
 ```
 
+### Negate Flag
+
+The `negate` flag inverts the entire block result after evaluation:
+
+```esp
+CRI AND true    # negate = true
+    CTN ...     # evaluates to Pass
+CRI_END
+# Final result: Fail (negated)
+```
+
+**Negation rules:**
+- `Pass` → `Fail`
+- `Fail` → `Pass`
+- `Error` → `Error` (unchanged)
+
 ---
 
 ## Part 5: Advanced Techniques
 
 ### Example: TCP Listener Validation
 
-This example is from `esp/test_tcp_listener.esp` — validates network port states.
+This example validates network port states — from `esp/test_tcp_listener.esp`:
 
 ```esp
 META
-    esp_scan_id `test-tcp-listener-001`
+    esp_id `test-tcp-listener-001`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `medium`
     control_mapping `CIS:3.4.1,NIST-800-53:CM-7`
     title `Network Service Port Validation`
     description `Validates expected TCP listeners and ensures prohibited ports are not listening`
-    version `1.0.0`
     author `security-team`
     tags `network,tcp,ports,services`
 META_END
@@ -636,11 +746,11 @@ See [ctn_tcp_listener.md](../contract_kit/docs/ctn_tcp_listener.md) for the comp
 
 Group multiple objects together with SET operations.
 
-| Operation | Description |
-|-----------|-------------|
-| `union` | Combine objects (A + B + C) |
-| `intersection` | Objects in all sets (A ∩ B) |
-| `complement` | Remove objects (A - B) |
+| Operation | Description | Operand Count |
+|-----------|-------------|---------------|
+| `union` | Combine objects (A + B + C) | 1+ |
+| `intersection` | Objects in all sets (A ∩ B) | 2+ |
+| `complement` | Remove objects (A - B) | Exactly 2 |
 
 ```esp
 DEF
@@ -720,9 +830,9 @@ Common patterns:
 | Email | `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$` |
 | Date (YYYY-MM-DD) | `^\d{4}-\d{2}-\d{2}$` |
 
-### Record Checks
+### Record Checks (Advanced)
 
-Validate structured data (JSON, configuration files, API responses). Used with CTN types like `json_record` and `k8s_resource`.
+Validate structured data (JSON, configuration files, API responses). Used with CTN types like `json_record` and `k8s_resource`. These require SDK implementation.
 
 ```esp
 STATE json_config_valid
@@ -779,15 +889,15 @@ OBJECT_END
 
 Compute values at runtime:
 
-| Operation | Purpose | Example Use |
-|-----------|---------|-------------|
-| `CONCAT` | Join strings | Build file paths |
-| `SPLIT` | Split string into array | Parse delimited values |
-| `SUBSTRING` | Extract portion of string | Get prefix/suffix |
-| `REGEX_CAPTURE` | Extract via regex | Parse structured text |
-| `ARITHMETIC` | Math operations | Calculate thresholds |
-| `COUNT` | Count collection items | Validate array length |
-| `EXTRACT` | Get field from object | Access collected data |
+| Operation | Purpose | Input → Output |
+|-----------|---------|----------------|
+| `CONCAT` | Join strings | string → string |
+| `SPLIT` | Split string into array | string → string[] |
+| `SUBSTRING` | Extract portion of string | string → string |
+| `REGEX_CAPTURE` | Extract via regex | string → string |
+| `ARITHMETIC` | Math operations | int/float → same type |
+| `COUNT` | Count collection items | collection → int |
+| `EXTRACT` | Get field from object | object → field type |
 
 **CONCAT example:**
 
@@ -829,32 +939,24 @@ VAR message string `This has a ``backtick`` inside`
 VAR regex string r`^\d{3}-\d{4}$`
 ```
 
-### Type System
-
-| Type | Purpose | Example |
-|------|---------|---------|
-| `string` | Text values | `/etc/passwd` |
-| `int` | 64-bit signed integer | `1024` |
-| `float` | 64-bit floating point | `3.14159` |
-| `boolean` | True/false | `true` |
-| `binary` | Raw byte data | File contents |
-| `record_data` | Structured data (JSON, etc.) | Nested fields |
-| `version` | Semantic version | `2.4.1` |
-| `evr_string` | Package version (epoch:version-release) | `2:1.8.0-1.el9` |
-
 ---
 
 ## Part 6: Real-World Examples
 
-### Kubernetes: API Server RBAC Validation
+### Kubernetes: API Server RBAC Validation (Advanced)
+
+This example requires the `k8s_resource` CTN type from the ESP Agent SDK:
 
 ```esp
 META
-    esp_scan_id `stig-v242382-rbac-auth`
+    esp_id `stig-v242382-rbac-auth`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `kubernetes`
     criticality `high`
     control_mapping `DISA-STIG:V-242382,NIST-800-53:AC-6`
     title `Kubernetes API Server must have RBAC authorization enabled`
+    author `security-team`
     tags `stig,kubernetes,apiserver,authorization,rbac`
 META_END
 
@@ -883,11 +985,15 @@ DEF_END
 
 See [ctn_k8s_resource.md](../contract_kit/docs/ctn_k8s_resource.md) for Kubernetes resource validation.
 
-### JSON Configuration Validation
+### JSON Configuration Validation (Advanced)
+
+This example requires the `json_record` CTN type from the ESP Agent SDK:
 
 ```esp
 META
-    esp_scan_id `json-config-validation`
+    esp_id `json-config-validation`
+    version `1.0.0`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `medium`
     control_mapping `CIS:5.1.1`
@@ -1025,7 +1131,21 @@ OBJECT_END
 | Undefined reference | `STATE_REF` points to non-existent state | Check spelling |
 | Type mismatch | String operator on integer | Match operator to type |
 | Invalid backticks | Unbalanced backticks | Escape with ` `` ` |
-| Missing META fields | Required attestation fields missing | Add `esp_scan_id`, `platform`, `criticality`, `control_mapping` |
+| Missing META fields | Required v1.0.0 fields missing | Add all required fields |
+| Shadowing | Local symbol has same name as global | Rename local symbol |
+| Duplicate symbol | Same identifier used twice in scope | Use unique names |
+
+### Required META Fields (v1.0.0)
+
+These fields are **required** and will cause validation errors if missing:
+
+- `esp_id`
+- `version`
+- `dsl_schema_version`
+- `platform`
+- `criticality`
+- `control_mapping`
+- `title`
 
 ### Policy Always Fails
 
@@ -1034,6 +1154,7 @@ Common causes:
 - Wrong operator (`!=` instead of `=`)
 - Incorrect TEST specification
 - Object field names don't match CTN type requirements
+- State field missing from collected data → Fail (not Error)
 
 **Solution:** Check [contract_kit/docs/](../contract_kit/docs/) for the correct field names and types for your CTN type.
 
@@ -1043,6 +1164,32 @@ Common causes:
 - Using `CRI OR` when all checks should be required
 - Using `TEST any` when `TEST all` is needed
 - State condition is too permissive
+
+### Scoping Errors
+
+**Duplicate Detection:** Identifiers must be unique within scope. Global symbols share a unified namespace.
+
+```esp
+# Error: 'config' already declared
+VAR config string `/etc/app.conf`
+STATE config    # Duplicate identifier!
+    ...
+STATE_END
+```
+
+**Shadowing Prevention:** Local symbols must not shadow global symbols.
+
+```esp
+STATE secure_settings    # Global
+    ...
+STATE_END
+
+CTN file_content
+    STATE secure_settings    # Error: shadows global!
+        ...
+    STATE_END
+CTN_END
+```
 
 ### Debugging Tips
 
@@ -1142,43 +1289,54 @@ OBJECT_END
 
 ```bash
 # File metadata validation
-make run ESP=esp/test_file_metadata.esp
+esp_agent esp/test_file_metadata.esp
 
 # File content validation
-make run ESP=esp/test_file_content.esp
+esp_agent esp/test_file_content.esp
 
 # TCP listener validation
-make run ESP=esp/test_tcp_listener.esp
+esp_agent esp/test_tcp_listener.esp
 
 # All example policies
-make run ESP=esp/
+esp_agent esp/
 ```
 
 ---
 
 ## Part 10: META Block Reference
 
-The META block provides metadata about your policy. It is **required for attestation generation**.
+The META block provides metadata about your policy. All v1.0.0 required fields **must** be present for valid policies.
 
-### Required Fields
+### Required Fields (v1.0.0)
 
 | Field | Description | Example |
 |-------|-------------|---------|
-| `esp_scan_id` | Unique policy identifier | `stig-v242382-rbac` |
+| `esp_id` | Unique policy identifier | `stig-sv253284-sehop-enabled` |
+| `version` | Policy revision (content version) | `1.0.0` |
+| `dsl_schema_version` | ESP language version | `1.0.0` |
 | `platform` | Target platform | `linux`, `windows`, `kubernetes` |
 | `criticality` | Severity level | `critical`, `high`, `medium`, `low`, `info` |
-| `control_mapping` | Compliance framework mappings | `NIST-800-53:AC-6,CIS:5.1.1` |
+| `control_mapping` | Framework:Control mapping | `NIST-800-53:AC-6,CIS:5.1.1` |
+| `title` | Human-readable title | `SSH Root Login Disabled` |
 
-### Optional Fields
+### Recommended Fields
 
 | Field | Description | Example |
 |-------|-------------|---------|
-| `version` | Policy version | `1.2.0` |
-| `author` | Author/team name | `security-team` |
-| `title` | Short policy title | `SSH Root Login Disabled` |
 | `description` | Human-readable description | Any text |
+| `author` | Author/team name | `security-team` |
+| `agent_type` | Target agent type | `endpoint` |
 | `tags` | Comma-separated tags | `ssh,hardening,linux` |
-| `weight` | Explicit weight (0.0-1.0) | `0.95` |
+
+### Policy Identity
+
+Every policy has a canonical identity tuple:
+
+```
+(esp_id, version, dsl_schema_version)
+```
+
+This tuple uniquely identifies a specific policy revision at a specific DSL version.
 
 ### Control Mapping Format
 
@@ -1204,14 +1362,15 @@ META_END
 
 ```esp
 META
-    esp_scan_id `rhel9-stig-password-complexity`
+    esp_id `rhel9-stig-password-complexity`
     version `1.0.0`
-    author `security-team`
+    dsl_schema_version `1.0.0`
     platform `linux`
     criticality `medium`
     control_mapping `DISA-STIG:RHEL-09-611015,NIST-800-53:IA-5`
     title `RHEL 9 Password Complexity Requirements`
     description `Ensures password complexity meets STIG requirements`
+    author `security-team`
     tags `stig,password,authentication,rhel9`
 META_END
 ```
@@ -1230,6 +1389,5 @@ You now have the knowledge to:
 **Resources:**
 
 - [CTN Type Documentation](../contract_kit/docs/) — Complete field specifications for each CTN type
-- [EBNF Grammar](EBNF.md) — Formal language specification
-- [Scanner Development Guide](Scanner_Development_Guide.md) — Creating custom CTN types
+- [ESP Overview](https://github.com/scanset/Endpoint-State-Policy) — Language overview specification
 - [Example Policies](../esp/) — Working policy examples

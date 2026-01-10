@@ -14,10 +14,10 @@ Reference implementation library for ESP (Endpoint State Policy) compliance scan
 
 ## Overview
 
-Contract Kit (`contract_kit`) demonstrates how to build scanners using `agent_core`. It provides:
+Contract Kit (`contract_kit`) demonstrates how to build scanners using the ESP execution engine. It provides:
 
 - **Reference Implementations**: Working collectors and executors for common CTN types
-- **High-Level API**: Simplified `agent_core_api` for scan execution
+- **High-Level API**: Simplified `execution_api` for scan execution
 - **CTN Contracts**: Interface specifications for each CTN type
 - **Platform Commands**: Secure command execution with whitelisting
 
@@ -28,20 +28,21 @@ This crate serves as both a usable library and a template for building custom sc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Your Scanner                           │
-│  (uses contract_kit or implements agent_core directly)      │
+│  (uses contract_kit or implements execution_engine directly)│
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     contract_kit                            │
 │  • Reference collectors/executors                           │
-│  • agent_core_api (high-level interface)                    │
+│  • execution_api (high-level interface)                     │
 │  • Example contracts and commands                           │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      agent_core                             │
+│                   execution_engine                          │
+│  (github.com/CurtisSlone/Endpoint-State-Policy)             │
 │  • Resolution engine                                        │
 │  • Execution engine                                         │
 │  • Strategy framework (traits, registry)                    │
@@ -50,6 +51,7 @@ This crate serves as both a usable library and a template for building custom sc
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                       compiler                              │
+│  (github.com/CurtisSlone/Endpoint-State-Policy)             │
 │  • ESP parsing and validation                               │
 │  • AST generation                                           │
 └─────────────────────────────────────────────────────────────┘
@@ -64,7 +66,7 @@ ESP File (.esp)
       │
       ▼
 ┌─────────────────┐
-│  agent_core_api │  scan_file() / scan_ast()
+│  execution_api  │  scan_file() / scan_ast()
 └────────┬────────┘
          │
          ▼
@@ -96,12 +98,12 @@ Each CTN type has three components:
 
 ## Module Reference
 
-### `agent_core_api`
+### `execution_api`
 
-High-level API that abstracts compiler, agent_core, and common into simple functions.
+High-level API that abstracts compiler, execution_engine, and common into simple functions.
 
 ```rust
-use contract_kit::agent_core_api::{scan_file, scan_ast, ScanError};
+use contract_kit::execution_api::{scan_file, scan_ast, ScanError};
 
 // Scan a file
 let result = scan_file("policy.esp", registry)?;
@@ -147,6 +149,17 @@ let contract = create_file_metadata_contract();
 // contract.field_mappings - ESP names → collected data names
 ```
 
+**Available Contracts:**
+
+| Contract | CTN Type |
+|----------|----------|
+| `create_file_metadata_contract()` | `file_metadata` |
+| `create_file_content_contract()` | `file_content` |
+| `create_json_record_contract()` | `json_record` |
+| `create_tcp_listener_contract()` | `tcp_listener` |
+| `create_k8s_resource_contract()` | `k8s_resource` |
+| `create_computed_values_contract()` | `computed_values` |
+
 See `contracts/` for reference implementations.
 
 ---
@@ -156,13 +169,10 @@ See `contracts/` for reference implementations.
 Data collection implementations.
 
 ```rust
-use contract_kit::collectors::{FileSystemCollector, CommandCollector};
+use contract_kit::collectors::FileSystemCollector;
 
 // File system collector (metadata, content, JSON)
 let fs_collector = FileSystemCollector::new();
-
-// Command-based collector (with whitelisted executor)
-let cmd_collector = CommandCollector::new("my-collector", command_executor);
 ```
 
 **Reference Collectors:**
@@ -170,10 +180,40 @@ let cmd_collector = CommandCollector::new("my-collector", command_executor);
 | Collector | Data Sources |
 |-----------|--------------|
 | `FileSystemCollector` | File metadata, content, JSON |
-| `CommandCollector` | System commands (rpm, systemctl, etc.) |
+| `TcpListenerCollector` | TCP port listening state |
+| `K8sResourceCollector` | Kubernetes API resources |
 | `ComputedValuesCollector` | Pass-through for RUN results |
 
 See `collectors/` for additional implementations.
+
+---
+
+### CollectionMethod & Traceability
+
+Collectors set a `CollectionMethod` on every `CollectedData` instance they return. This provides provenance and debugging information about how a value was collected (command, file read, computed, socket inspection, etc.). Use the builder-style API for rich metadata, or convenience constructors for simple cases.
+
+Examples:
+
+```rust
+use common::results::{CollectionMethod, CollectionMethodType};
+
+// Computed value (no system collection performed)
+let computed = CollectionMethod::computed()
+    .with_description("Computed value - derived from runtime variables");
+
+// Builder-style method for command-based collectors
+let cmd_method = CollectionMethod::builder()
+    .method_type(CollectionMethodType::Command)
+    .description("Query package information")
+    .target("package:openssl")
+    .command("pkg query openssl")
+    .input("package_name", "openssl")
+    .build();
+
+// File read example
+let file_method = CollectionMethod::file_read("/etc/passwd")
+    .with_description("Read file contents for validation");
+```
 
 ---
 
@@ -194,10 +234,9 @@ let executor = FileMetadataExecutor::new(contract);
 | `FileMetadataExecutor` | Permissions, owner, group, size |
 | `FileContentExecutor` | String operations on file content |
 | `JsonRecordExecutor` | Structured JSON with field paths |
-| `RpmPackageExecutor` | Package installation and versions |
-| `SystemdServiceExecutor` | Service active/enabled status |
-| `SysctlParameterExecutor` | Kernel parameters |
-| `SelinuxStatusExecutor` | SELinux enforcement mode |
+| `TcpListenerExecutor` | TCP port listening state |
+| `K8sResourceExecutor` | Kubernetes resource validation |
+| `ComputedValuesExecutor` | RUN operation results |
 
 See `executors/` for additional implementations.
 
@@ -205,13 +244,13 @@ See `executors/` for additional implementations.
 
 ### `commands`
 
-Platform-specific command whitelists.
+Platform-specific command execution with whitelisting.
 
 ```rust
-use contract_kit::commands::create_rhel9_command_executor;
+use contract_kit::commands::create_k8s_command_executor;
 
-let executor = create_rhel9_command_executor();
-// Whitelisted: rpm, systemctl, sysctl, getenforce, etc.
+let executor = create_k8s_command_executor();
+// Whitelisted: kubectl get, kubectl describe, etc.
 ```
 
 **Security Features:**
@@ -225,7 +264,7 @@ let executor = create_rhel9_command_executor();
 ### Basic Scan
 
 ```rust
-use contract_kit::agent_core_api::{
+use contract_kit::execution_api::{
     scan_file, CtnStrategyRegistry, ScanError,
 };
 use std::sync::Arc;
@@ -254,7 +293,7 @@ fn main() -> Result<(), ScanError> {
 ### Building a Registry
 
 ```rust
-use contract_kit::agent_core_api::CtnStrategyRegistry;
+use contract_kit::execution_api::CtnStrategyRegistry;
 use contract_kit::collectors::FileSystemCollector;
 use contract_kit::executors::FileMetadataExecutor;
 use contract_kit::contracts::create_file_metadata_contract;
@@ -278,7 +317,7 @@ fn create_my_registry() -> Result<CtnStrategyRegistry, ScanError> {
 ### Using Pre-compiled AST
 
 ```rust
-use contract_kit::agent_core_api::{scan_ast, compile_file};
+use contract_kit::execution_api::{scan_ast, compile_file};
 
 // Compile once
 let ast = compile_file("policy.esp")?;
@@ -299,7 +338,7 @@ To build a scanner using contract_kit:
 
 2. **Create registry with needed CTN types:**
    ```rust
-   use contract_kit::agent_core_api::CtnStrategyRegistry;
+   use contract_kit::execution_api::CtnStrategyRegistry;
    use contract_kit::collectors::*;
    use contract_kit::executors::*;
    use contract_kit::contracts::*;
@@ -316,7 +355,7 @@ To build a scanner using contract_kit:
 
 3. **Scan policies:**
    ```rust
-   use contract_kit::agent_core_api::scan_file;
+   use contract_kit::execution_api::scan_file;
 
    let result = scan_file("policy.esp", Arc::new(registry))?;
    ```
@@ -329,7 +368,7 @@ To add a new CTN type:
 
 ```rust
 // my_contracts.rs
-use agent_core::strategies::{CtnContract, ObjectFieldSpec, StateFieldSpec};
+use execution_engine::strategies::{CtnContract, ObjectFieldSpec, StateFieldSpec};
 
 pub fn create_my_ctn_contract() -> CtnContract {
     let mut contract = CtnContract::new("my_ctn_type".to_string());
@@ -358,7 +397,7 @@ pub fn create_my_ctn_contract() -> CtnContract {
 
 ```rust
 // my_collector.rs
-use agent_core::strategies::{CtnDataCollector, CollectedData, CollectionError};
+use execution_engine::strategies::{CtnDataCollector, CollectedData, CollectionError};
 
 pub struct MyCollector;
 
@@ -386,7 +425,7 @@ impl CtnDataCollector for MyCollector {
 
 ```rust
 // my_executor.rs
-use agent_core::strategies::{CtnExecutor, CtnExecutionResult, CtnExecutionError};
+use execution_engine::strategies::{CtnExecutor, CtnExecutionResult, CtnExecutionError};
 
 pub struct MyExecutor {
     contract: CtnContract,
@@ -404,7 +443,7 @@ impl CtnExecutor for MyExecutor {
         contract: &CtnContract,
     ) -> Result<CtnExecutionResult, CtnExecutionError> {
         // Validate collected data against states
-        // Use helpers from agent_core::execution
+        // Use helpers from execution_engine::execution
         todo!()
     }
 }
@@ -423,11 +462,17 @@ See the existing implementations in `collectors/` and `executors/` for complete 
 
 ## Related Documentation
 
-- [agent_core](../agent_core/README.md) - Core execution framework
-- [compiler](../compiler/README.md) - ESP parsing and validation
-- [common](../common/README.md) - Shared types (AST, logging, results)
-- [EBNF Grammar](../docs/EBNF.md) - ESP language specification
-- [Scanner Development Guide](./Scanner_Development_Guide.md) - Detailed extension guide
+### ESP Core (github.com/CurtisSlone/Endpoint-State-Policy)
+
+- [execution_engine](https://github.com/CurtisSlone/Endpoint-State-Policy/tree/main/execution_engine) - Core execution framework
+- [compiler](https://github.com/CurtisSlone/Endpoint-State-Policy/tree/main/compiler) - ESP parsing and validation
+- [common](https://github.com/CurtisSlone/Endpoint-State-Policy/tree/main/common) - Shared types (AST, logging, results)
+- [ESP Specification](https://github.com/CurtisSlone/Endpoint-State-Policy/tree/main/docs) - Language specification documents
+
+### ESP Agent SDK (this repository)
+
+- [ESP Language Guide](./guides/ESP_Language_Guide.md) - Policy authoring tutorial
+- [Contract Development Guide](./guides/Contract_Development_Guide.md) - Detailed CTN extension guide
 
 ## License
 

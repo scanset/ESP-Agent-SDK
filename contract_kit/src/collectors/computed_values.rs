@@ -1,7 +1,19 @@
+//! This "collector" doesn't actually collect anything from the system.
+//! It's a pass-through that allows the executor to validate computed variables.
 //! Computed Values Collector
 //!
 //! This "collector" doesn't actually collect anything from the system.
 //! It's a pass-through that allows the executor to validate computed variables.
+//!
+//! # CollectionMethod Usage
+//!
+//! Use `CollectionMethod` to mark collected data for provenance. For computed collectors
+//! you can use the convenience constructor:
+//!
+//! ```rust
+//! use common::results::CollectionMethod;
+//! let method = CollectionMethod::computed().with_description("Computed value - no actual system collection performed");
+//! ```
 
 use common::results::CollectionMethod;
 use execution_engine::execution::BehaviorHints;

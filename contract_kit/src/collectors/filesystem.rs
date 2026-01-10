@@ -304,7 +304,7 @@ impl FileSystemCollector {
 
         // Collect files recursively
         let mut files = Vec::new();
-        self.scan_directory_recursive(
+        scan_directory_recursive(
             base,
             &mut files,
             0,
@@ -340,80 +340,82 @@ impl FileSystemCollector {
 
         Ok(data)
     }
+}
 
-    /// Recursively scan directory tree
-    fn scan_directory_recursive(
-        &self,
-        dir: &Path,
-        files: &mut Vec<std::path::PathBuf>,
-        current_depth: i64,
-        max_depth: i64,
-        include_hidden: bool,
-        follow_symlinks: bool,
-    ) -> Result<(), CollectionError> {
-        // Check depth limit
-        if current_depth >= max_depth {
+/// Recursively scan directory tree
+///
+/// This is a standalone function rather than a method because it only uses
+/// its parameters for recursion, not any state from `self`.
+fn scan_directory_recursive(
+    dir: &Path,
+    files: &mut Vec<std::path::PathBuf>,
+    current_depth: i64,
+    max_depth: i64,
+    include_hidden: bool,
+    follow_symlinks: bool,
+) -> Result<(), CollectionError> {
+    // Check depth limit
+    if current_depth >= max_depth {
+        return Ok(());
+    }
+
+    // Try to read directory
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => {
+            // Skip directories we can't read
             return Ok(());
         }
+    };
 
-        // Try to read directory
-        let entries = match fs::read_dir(dir) {
+    for entry_result in entries {
+        let entry = match entry_result {
             Ok(e) => e,
-            Err(_) => {
-                // Skip directories we can't read
-                return Ok(());
+            Err(_) => continue, // Skip bad entries
+        };
+
+        let path = entry.path();
+
+        // Get filename for hidden check
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Skip hidden files unless include_hidden is set
+        if !include_hidden && file_name.starts_with('.') {
+            continue;
+        }
+
+        // Get metadata (respecting symlinks setting)
+        let metadata = if follow_symlinks {
+            match fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            }
+        } else {
+            match fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
             }
         };
 
-        for entry_result in entries {
-            let entry = match entry_result {
-                Ok(e) => e,
-                Err(_) => continue, // Skip bad entries
-            };
-
-            let path = entry.path();
-
-            // Get filename for hidden check
-            let file_name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            // Skip hidden files unless include_hidden is set
-            if !include_hidden && file_name.starts_with('.') {
-                continue;
-            }
-
-            // Get metadata (respecting symlinks setting)
-            let metadata = if follow_symlinks {
-                match fs::metadata(&path) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                }
-            } else {
-                match fs::symlink_metadata(&path) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                }
-            };
-
-            if metadata.is_file() {
-                files.push(path);
-            } else if metadata.is_dir() {
-                // Recurse into subdirectory
-                let _ = self.scan_directory_recursive(
-                    &path,
-                    files,
-                    current_depth + 1,
-                    max_depth,
-                    include_hidden,
-                    follow_symlinks,
-                );
-            }
+        if metadata.is_file() {
+            files.push(path);
+        } else if metadata.is_dir() {
+            // Recurse into subdirectory
+            let _ = scan_directory_recursive(
+                &path,
+                files,
+                current_depth + 1,
+                max_depth,
+                include_hidden,
+                follow_symlinks,
+            );
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 impl CtnDataCollector for FileSystemCollector {
