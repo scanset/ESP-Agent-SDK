@@ -1,6 +1,9 @@
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![GitHub tag](https://img.shields.io/github/v/tag/scanset/ESP-Agent-SDK?sort=semver)](https://github.com/scanset/ESP-Agent-SDK/tags)
 # ESP Agent SDK
 
-Build compliance scanners using [Endpoint State Policy (ESP)](https://github.com/CurtisSlone/Endpoint-State-Policy).
+Build compliance scanners using [Endpoint State Policy (ESP)](https://github.com/scanset/Endpoint-State-Policy).
 
 ## Overview
 
