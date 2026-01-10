@@ -1,0 +1,18 @@
+[package]
+name = "agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ESP Agent CLI"
+
+[dependencies]
+common = { workspace = true, features = ["full-results", "attestation", "assessor-evidence"] }
+contract_kit.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "esp_agent"
+path = "src/main.rs"

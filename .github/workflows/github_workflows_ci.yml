@@ -1,0 +1,80 @@
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: CI Checks
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for keyless signing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Format Check
+        run: cargo fmt -p contract_kit -p agent -- --check
+
+      - name: Clippy
+        run: |
+          cargo clippy -p contract_kit -p agent --all-targets --all-features -- \
+            -D warnings \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            -D clippy::indexing_slicing
+
+      - name: Build
+        run: cargo build -p contract_kit -p agent --all-features
+
+      - name: Test
+        run: cargo test -p contract_kit -p agent --all-features
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Security Audit
+        run: cargo audit
+
+      # ESP Compliance Scanning (dogfooding)
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Install Semgrep
+        run: |
+          sudo pip install semgrep --break-system-packages --ignore-installed
+          semgrep --version
+
+      - name: ESP Compliance Scan (Signed)
+        run: cargo run -p agent --release -- --sign esp/
+        continue-on-error: true
+
+      - name: Display SBOM
+        if: always()
+        run: cat sbom.cdx.json
