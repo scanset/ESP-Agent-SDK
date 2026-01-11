@@ -1,14 +1,33 @@
 //! Attestation builder
 //!
 //! Builds CUI-free attestation results for network transport.
+//!
+//! ## Hash Architecture
+//!
+//! The `content_hash` and `evidence_hash` are pre-computed in the execution engine
+//! and passed through via `ScanResult`. This ensures hash consistency across all
+//! output formats.
 
-use common::results::{AttestationResult, CheckInput, Evidence, ResultBuilder};
+use common::results::{AttestationResult, CheckInput, ResultBuilder};
 use contract_kit::execution_api::ScanResult;
 
 use super::OutputError;
+use crate::output::combine_scan_hashes;
 
 /// Build a unified AttestationResult containing all check attestations in a single envelope
+///
+/// ## Hash Handling
+///
+/// Uses pre-computed hashes from `ScanResult` rather than recomputing them.
+/// This ensures the attestation's hashes match those in full results and
+/// assessor packages for the same scan.
 pub fn build_attestation(scan_results: &[ScanResult]) -> Result<AttestationResult, OutputError> {
+    if scan_results.is_empty() {
+        return Err(OutputError::Build(
+            "At least one scan result is required".to_string(),
+        ));
+    }
+
     let result_builder = ResultBuilder::from_system("esp-agent");
 
     // Convert all scan results to CheckInput
@@ -25,16 +44,10 @@ pub fn build_attestation(scan_results: &[ScanResult]) -> Result<AttestationResul
         })
         .collect();
 
-    // Compute combined evidence hash from all evidence
-    let mut combined_evidence = Evidence::new();
-    for scan_result in scan_results {
-        if let Some(evidence) = &scan_result.evidence {
-            combined_evidence.merge(evidence.clone());
-        }
-    }
-    let evidence_hash = combined_evidence.compute_hash().ok();
+    // Get pre-computed hashes from scan results
+    let (content_hash, evidence_hash) = combine_scan_hashes(scan_results)?;
 
     result_builder
-        .build_attestation(checks, evidence_hash)
+        .build_attestation(checks, content_hash, evidence_hash)
         .map_err(|e| e.into())
 }

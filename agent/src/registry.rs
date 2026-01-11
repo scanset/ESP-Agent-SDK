@@ -4,7 +4,7 @@
 //! collectors and executors for the agent.
 
 use contract_kit::execution_api::strategies::{CtnStrategyRegistry, StrategyError};
-use contract_kit::{collectors, commands, contracts, executors};
+use contract_kit::{collectors, contracts, executors};
 
 /// Create a registry with all available strategies
 ///
@@ -51,16 +51,6 @@ pub fn create_scanner_registry() -> Result<CtnStrategyRegistry, StrategyError> {
     registry.register_ctn_strategy(
         Box::new(collectors::TcpListenerCollector::new()),
         Box::new(executors::TcpListenerExecutor::new(tcp_listener_contract)),
-    )?;
-
-    // Register Kubernetes resource strategy
-    let k8s_executor = commands::create_k8s_command_executor();
-    let k8s_collector =
-        collectors::K8sResourceCollector::new("k8s-resource-collector", k8s_executor);
-    let k8s_resource_contract = contracts::create_k8s_resource_contract();
-    registry.register_ctn_strategy(
-        Box::new(k8s_collector),
-        Box::new(executors::K8sResourceExecutor::new(k8s_resource_contract)),
     )?;
 
     Ok(registry)

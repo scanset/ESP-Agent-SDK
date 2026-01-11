@@ -1,15 +1,16 @@
 //! TCP Listener Collector
 //!
 //! Collects information about TCP ports in LISTEN state.
-//! Reads /proc/net/tcp on Linux to determine if a port is listening.
+//! - Windows: Uses IP Helper API (GetExtendedTcpTable)
+//! - Linux: Reads /proc/net/tcp
 
 use common::results::{CollectionMethod, CollectionMethodType};
 use execution_engine::execution::BehaviorHints;
 use execution_engine::strategies::{CollectedData, CollectionError, CtnContract, CtnDataCollector};
 use execution_engine::types::common::ResolvedValue;
 use execution_engine::types::execution_context::{ExecutableObject, ExecutableObjectElement};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+
+use crate::commands::tcp_listener::check_port_listening;
 
 /// Collector for TCP listener information
 pub struct TcpListenerCollector {
@@ -81,128 +82,6 @@ impl TcpListenerCollector {
         }
         None
     }
-
-    /// Check if port is listening by reading /proc/net/tcp
-    fn check_port_listening(&self, port: u16, host_filter: Option<&str>) -> ListenerResult {
-        let port_hex = format!("{:04X}", port);
-
-        // Read /proc/net/tcp
-        let file = match File::open("/proc/net/tcp") {
-            Ok(f) => f,
-            Err(e) => {
-                return ListenerResult {
-                    listening: false,
-                    local_address: None,
-                    error: Some(format!("Cannot open /proc/net/tcp: {}", e)),
-                };
-            }
-        };
-
-        let reader = BufReader::new(file);
-
-        // Skip header line, then check each entry
-        for line in reader.lines().skip(1) {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-
-            if let Some(result) = self.parse_tcp_line(&line, &port_hex, host_filter) {
-                return result;
-            }
-        }
-
-        // Port not found listening
-        ListenerResult {
-            listening: false,
-            local_address: None,
-            error: None,
-        }
-    }
-
-    /// Parse a line from /proc/net/tcp
-    fn parse_tcp_line(
-        &self,
-        line: &str,
-        port_hex: &str,
-        host_filter: Option<&str>,
-    ) -> Option<ListenerResult> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 4 {
-            return None;
-        }
-
-        let local_addr = parts.get(1)?;
-        let addr_parts: Vec<&str> = local_addr.split(':').collect();
-        if addr_parts.len() != 2 {
-            return None;
-        }
-
-        let local_ip_hex = addr_parts.first()?;
-        let local_port_hex = addr_parts.get(1)?;
-
-        // Check if port matches
-        if *local_port_hex != port_hex {
-            return None;
-        }
-
-        // Check state - 0A is LISTEN
-        let state = parts.get(3)?;
-        if *state != "0A" {
-            return None;
-        }
-
-        // Convert hex IP to dotted decimal
-        let local_ip = self.hex_to_ipv4(local_ip_hex);
-
-        // If host filter specified, check if it matches
-        if let Some(filter) = host_filter {
-            if local_ip != filter {
-                // Special case: 0.0.0.0 matches any filter since it binds all interfaces
-                if local_ip != "0.0.0.0" {
-                    return None;
-                }
-            }
-        }
-
-        // Found a matching listener
-        let port = u16::from_str_radix(local_port_hex, 16).unwrap_or(0);
-        Some(ListenerResult {
-            listening: true,
-            local_address: Some(format!("{}:{}", local_ip, port)),
-            error: None,
-        })
-    }
-
-    /// Convert hex IP address (little-endian) to dotted decimal
-    fn hex_to_ipv4(&self, hex: &str) -> String {
-        if hex.len() != 8 {
-            return "invalid".to_string();
-        }
-
-        let bytes: Vec<u8> = (0..4)
-            .filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok())
-            .collect();
-
-        if bytes.len() != 4 {
-            return "invalid".to_string();
-        }
-
-        // /proc/net/tcp stores in little-endian, so reverse for display
-        let b3 = bytes.get(3).copied().unwrap_or(0);
-        let b2 = bytes.get(2).copied().unwrap_or(0);
-        let b1 = bytes.get(1).copied().unwrap_or(0);
-        let b0 = bytes.first().copied().unwrap_or(0);
-        format!("{}.{}.{}.{}", b3, b2, b1, b0)
-    }
-}
-
-/// Result of checking a port
-struct ListenerResult {
-    listening: bool,
-    local_address: Option<String>,
-    #[allow(dead_code)]
-    error: Option<String>,
 }
 
 impl Default for TcpListenerCollector {
@@ -227,8 +106,16 @@ impl CtnDataCollector for TcpListenerCollector {
         // Extract host filter (optional)
         let host_filter = self.extract_host(object);
 
-        // Check if port is listening
-        let result = self.check_port_listening(port, host_filter.as_deref());
+        // Check if port is listening using platform-native API
+        let result = check_port_listening(port, host_filter.as_deref());
+
+        // Handle collection errors
+        if let Some(ref error) = result.error {
+            return Err(CollectionError::CollectionFailed {
+                object_id: object.identifier.clone(),
+                reason: error.clone(),
+            });
+        }
 
         // Build collected data
         let mut data = CollectedData::new(
@@ -238,9 +125,14 @@ impl CtnDataCollector for TcpListenerCollector {
         );
 
         // Set collection method for traceability
+        #[cfg(windows)]
+        let description = "Check TCP port listener state via Windows IP Helper API";
+        #[cfg(not(windows))]
+        let description = "Check TCP port listener state via /proc/net/tcp";
+
         let mut method_builder = CollectionMethod::builder()
             .method_type(CollectionMethodType::SocketInspection)
-            .description("Check TCP port listener state via /proc/net/tcp")
+            .description(description)
             .target(format!("tcp:{}", port))
             .input("port", port.to_string());
 
@@ -292,22 +184,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hex_to_ipv4() {
+    fn test_collector_id() {
         let collector = TcpListenerCollector::new();
-
-        // 00000000 = 0.0.0.0 (all interfaces)
-        assert_eq!(collector.hex_to_ipv4("00000000"), "0.0.0.0");
-
-        // 0100007F = 127.0.0.1 (localhost, little-endian)
-        assert_eq!(collector.hex_to_ipv4("0100007F"), "127.0.0.1");
-
-        // Invalid length
-        assert_eq!(collector.hex_to_ipv4("0000"), "invalid");
+        assert_eq!(collector.collector_id(), "tcp_listener_collector");
     }
 
     #[test]
-    fn test_port_extraction() {
+    fn test_supported_ctn_types() {
         let collector = TcpListenerCollector::new();
-        assert_eq!(collector.collector_id(), "tcp_listener_collector");
+        assert_eq!(collector.supported_ctn_types(), vec!["tcp_listener"]);
     }
 }

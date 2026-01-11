@@ -1,6 +1,16 @@
 //! # File System Data Collector
 //!
-//! Collects file metadata (permissions, owner, group) and content for validation.
+//! Collects file metadata and content.
+//! On Windows, uses native Win32 APIs for metadata collection.
+//! On other platforms, uses standard Rust APIs.
+//!
+//! ## Field Portability
+//!
+//! | Category | Fields |
+//! |----------|--------|
+//! | Portable | `exists`, `readable`, `writable`, `file_size`, `is_directory`, `file_owner`, `file_group` |
+//! | Linux/macOS | `file_mode` (octal permissions) |
+//! | Windows | `is_readonly`, `is_hidden`, `is_system` |
 
 use common::results::{CollectionMethod, CollectionMethodType};
 use execution_engine::execution::BehaviorHints;
@@ -9,8 +19,9 @@ use execution_engine::strategies::{
 };
 use execution_engine::types::common::{RecordData, ResolvedValue};
 use execution_engine::types::execution_context::{ExecutableObject, ExecutableObjectElement};
-use std::fs;
 use std::path::Path;
+
+use crate::commands::filesystem::{get_file_metadata, read_file_content, FileSystemError};
 
 /// Collector for file system data
 pub struct FileSystemCollector {
@@ -48,7 +59,7 @@ impl FileSystemCollector {
         })
     }
 
-    /// Collect metadata via stat() - fast operation
+    /// Collect metadata using platform-native API
     fn collect_metadata(
         &self,
         path: &str,
@@ -61,104 +72,122 @@ impl FileSystemCollector {
         );
 
         // Set collection method for traceability
-        let method =
-            CollectionMethod::file_stat(path).with_description("Query file metadata via stat()");
+        #[cfg(windows)]
+        let description = "Query file metadata via Windows API";
+        #[cfg(not(windows))]
+        let description = "Query file metadata via stat()";
+
+        let method = CollectionMethod::builder()
+            .method_type(CollectionMethodType::FileStat)
+            .description(description)
+            .target(path)
+            .build();
         data.set_method(method);
 
-        let path_obj = Path::new(path);
+        // Get metadata using platform-native API
+        let metadata = get_file_metadata(path).map_err(|e| match e {
+            FileSystemError::AccessDenied(p) => CollectionError::AccessDenied {
+                object_id: object_id.to_string(),
+                reason: format!("Permission denied: {}", p),
+            },
+            FileSystemError::NotFound(_) => CollectionError::ObjectNotFound {
+                object_id: object_id.to_string(),
+            },
+            _ => CollectionError::CollectionFailed {
+                object_id: object_id.to_string(),
+                reason: e.to_string(),
+            },
+        })?;
 
-        // Check existence first
-        let exists = path_obj.exists();
-        data.add_field("exists".to_string(), ResolvedValue::Boolean(exists));
+        // ====================================================================
+        // Portable Fields (All Platforms)
+        // ====================================================================
 
-        if !exists {
-            // Early return - file doesn't exist
-            data.add_field(
-                "file_mode".to_string(),
-                ResolvedValue::String("".to_string()),
-            );
+        data.add_field(
+            "exists".to_string(),
+            ResolvedValue::Boolean(metadata.exists),
+        );
+
+        if !metadata.exists {
+            // Early return for non-existent files with default values
+            data.add_field("readable".to_string(), ResolvedValue::Boolean(false));
+            data.add_field("writable".to_string(), ResolvedValue::Boolean(false));
+            data.add_field("file_size".to_string(), ResolvedValue::Integer(0));
+            data.add_field("is_directory".to_string(), ResolvedValue::Boolean(false));
             data.add_field(
                 "file_owner".to_string(),
-                ResolvedValue::String("".to_string()),
+                ResolvedValue::String(String::new()),
             );
             data.add_field(
                 "file_group".to_string(),
-                ResolvedValue::String("".to_string()),
+                ResolvedValue::String(String::new()),
             );
-            data.add_field("readable".to_string(), ResolvedValue::Boolean(false));
-            data.add_field("file_size".to_string(), ResolvedValue::Integer(0));
+            // Platform-specific fields
+            data.add_field(
+                "file_mode".to_string(),
+                ResolvedValue::String(String::new()),
+            );
+            data.add_field("is_readonly".to_string(), ResolvedValue::Boolean(false));
+            data.add_field("is_hidden".to_string(), ResolvedValue::Boolean(false));
+            data.add_field("is_system".to_string(), ResolvedValue::Boolean(false));
             return Ok(data);
         }
 
-        // Get metadata
-        let metadata = fs::metadata(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                CollectionError::AccessDenied {
-                    object_id: object_id.to_string(),
-                    reason: format!("Permission denied: {}", e),
-                }
-            } else {
-                CollectionError::CollectionFailed {
-                    object_id: object_id.to_string(),
-                    reason: format!("Failed to get metadata: {}", e),
-                }
-            }
-        })?;
+        data.add_field(
+            "readable".to_string(),
+            ResolvedValue::Boolean(metadata.readable),
+        );
+        data.add_field(
+            "writable".to_string(),
+            ResolvedValue::Boolean(metadata.writable),
+        );
+        data.add_field(
+            "file_size".to_string(),
+            ResolvedValue::Integer(metadata.file_size as i64),
+        );
+        data.add_field(
+            "is_directory".to_string(),
+            ResolvedValue::Boolean(metadata.is_directory),
+        );
+        data.add_field(
+            "file_owner".to_string(),
+            ResolvedValue::String(metadata.file_owner),
+        );
+        data.add_field(
+            "file_group".to_string(),
+            ResolvedValue::String(metadata.file_group),
+        );
 
-        // File size
-        let size = metadata.len() as i64;
-        data.add_field("file_size".to_string(), ResolvedValue::Integer(size));
+        // ====================================================================
+        // Linux/macOS Only (empty string on Windows)
+        // ====================================================================
 
-        // Readable check
-        let readable = fs::File::open(path).is_ok();
-        data.add_field("readable".to_string(), ResolvedValue::Boolean(readable));
+        data.add_field(
+            "file_mode".to_string(),
+            ResolvedValue::String(metadata.file_mode),
+        );
 
-        // Platform-specific metadata
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // ====================================================================
+        // Windows Only (false on Linux/macOS)
+        // ====================================================================
 
-            // Permissions in octal format
-            let mode = metadata.permissions().mode();
-            let permissions = format!("{:04o}", mode & 0o7777);
-            data.add_field("file_mode".to_string(), ResolvedValue::String(permissions));
-
-            // Owner UID
-            let uid = metadata.uid();
-            data.add_field(
-                "file_owner".to_string(),
-                ResolvedValue::String(uid.to_string()),
-            );
-
-            // Group GID
-            let gid = metadata.gid();
-            data.add_field(
-                "file_group".to_string(),
-                ResolvedValue::String(gid.to_string()),
-            );
-        }
-
-        #[cfg(not(unix))]
-        {
-            // Non-Unix platforms - provide empty values
-            data.add_field(
-                "file_mode".to_string(),
-                ResolvedValue::String("".to_string()),
-            );
-            data.add_field(
-                "file_owner".to_string(),
-                ResolvedValue::String("".to_string()),
-            );
-            data.add_field(
-                "file_group".to_string(),
-                ResolvedValue::String("".to_string()),
-            );
-        }
+        data.add_field(
+            "is_readonly".to_string(),
+            ResolvedValue::Boolean(metadata.is_readonly),
+        );
+        data.add_field(
+            "is_hidden".to_string(),
+            ResolvedValue::Boolean(metadata.is_hidden),
+        );
+        data.add_field(
+            "is_system".to_string(),
+            ResolvedValue::Boolean(metadata.is_system),
+        );
 
         Ok(data)
     }
 
-    /// Collect file content - expensive operation
+    /// Collect file content
     fn collect_content(
         &self,
         path: &str,
@@ -174,38 +203,20 @@ impl FileSystemCollector {
         let method = CollectionMethod::file_read(path).with_description("Read file contents");
         data.set_method(method);
 
-        let path_obj = Path::new(path);
-
-        // Check existence
-        if !path_obj.exists() {
-            return Err(CollectionError::ObjectNotFound {
-                object_id: object_id.to_string(),
-            });
-        }
-
         // Read file content
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-                // Not UTF-8 - treat as binary
-                return Err(CollectionError::CollectionFailed {
-                    object_id: object_id.to_string(),
-                    reason: "File is not valid UTF-8 (binary file)".to_string(),
-                });
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                return Err(CollectionError::AccessDenied {
-                    object_id: object_id.to_string(),
-                    reason: format!("Cannot read file: {}", e),
-                });
-            }
-            Err(e) => {
-                return Err(CollectionError::CollectionFailed {
-                    object_id: object_id.to_string(),
-                    reason: format!("Failed to read file: {}", e),
-                });
-            }
-        };
+        let content = read_file_content(path).map_err(|e| match e {
+            FileSystemError::AccessDenied(p) => CollectionError::AccessDenied {
+                object_id: object_id.to_string(),
+                reason: format!("Cannot read file: {}", p),
+            },
+            FileSystemError::NotFound(_) => CollectionError::ObjectNotFound {
+                object_id: object_id.to_string(),
+            },
+            _ => CollectionError::CollectionFailed {
+                object_id: object_id.to_string(),
+                reason: e.to_string(),
+            },
+        })?;
 
         data.add_field("file_content".to_string(), ResolvedValue::String(content));
 
@@ -228,27 +239,12 @@ impl FileSystemCollector {
         let method = CollectionMethod::file_read(path).with_description("Read and parse JSON file");
         data.set_method(method);
 
-        let path_obj = Path::new(path);
+        // Read and parse JSON
+        let content = read_file_content(path).map_err(|e| CollectionError::CollectionFailed {
+            object_id: object_id.to_string(),
+            reason: e.to_string(),
+        })?;
 
-        // Check existence
-        if !path_obj.exists() {
-            return Err(CollectionError::ObjectNotFound {
-                object_id: object_id.to_string(),
-            });
-        }
-
-        // Read file content
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => {
-                return Err(CollectionError::CollectionFailed {
-                    object_id: object_id.to_string(),
-                    reason: format!("Failed to read file: {}", e),
-                });
-            }
-        };
-
-        // Parse JSON
         let json_value: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| CollectionError::CollectionFailed {
                 object_id: object_id.to_string(),
@@ -257,7 +253,6 @@ impl FileSystemCollector {
 
         let record_data = RecordData::from_json_value(json_value);
 
-        // Store as RecordData
         data.add_field(
             "json_data".to_string(),
             ResolvedValue::RecordData(Box::new(record_data)),
@@ -266,6 +261,7 @@ impl FileSystemCollector {
         Ok(data)
     }
 
+    /// Collect files recursively from a directory
     fn collect_recursive(
         &self,
         base_path: &str,
@@ -274,8 +270,6 @@ impl FileSystemCollector {
         include_hidden: bool,
         follow_symlinks: bool,
     ) -> Result<CollectedData, CollectionError> {
-        use std::path::Path;
-
         let mut data = CollectedData::new(
             object_id.to_string(),
             "file_content".to_string(),
@@ -318,7 +312,7 @@ impl FileSystemCollector {
         let mut file_count = 0;
 
         for file_path in files {
-            match fs::read_to_string(&file_path) {
+            match std::fs::read_to_string(&file_path) {
                 Ok(content) => {
                     all_content.push_str(&format!("=== {} ===\n", file_path.display()));
                     all_content.push_str(&content);
@@ -343,9 +337,6 @@ impl FileSystemCollector {
 }
 
 /// Recursively scan directory tree
-///
-/// This is a standalone function rather than a method because it only uses
-/// its parameters for recursion, not any state from `self`.
 fn scan_directory_recursive(
     dir: &Path,
     files: &mut Vec<std::path::PathBuf>,
@@ -360,7 +351,7 @@ fn scan_directory_recursive(
     }
 
     // Try to read directory
-    let entries = match fs::read_dir(dir) {
+    let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => {
             // Skip directories we can't read
@@ -387,14 +378,24 @@ fn scan_directory_recursive(
             continue;
         }
 
+        // On Windows, also check hidden attribute
+        #[cfg(windows)]
+        if !include_hidden {
+            if let Ok(metadata) = get_file_metadata(path.to_str().unwrap_or("")) {
+                if metadata.is_hidden {
+                    continue;
+                }
+            }
+        }
+
         // Get metadata (respecting symlinks setting)
         let metadata = if follow_symlinks {
-            match fs::metadata(&path) {
+            match std::fs::metadata(&path) {
                 Ok(m) => m,
                 Err(_) => continue,
             }
         } else {
-            match fs::symlink_metadata(&path) {
+            match std::fs::symlink_metadata(&path) {
                 Ok(m) => m,
                 Err(_) => continue,
             }
@@ -431,7 +432,6 @@ impl CtnDataCollector for FileSystemCollector {
             }
         })?;
 
-        // Then existing code...
         let path = self.extract_path(object)?;
 
         match contract.collection_strategy.collection_mode {

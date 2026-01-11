@@ -29,6 +29,7 @@ mod discovery;
 mod output;
 mod registry;
 mod scanner;
+mod signing;
 
 use cli::{parse_args, print_help, CliResult};
 use contract_kit::execution_api::logging;
